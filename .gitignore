@@ -1,0 +1,6 @@
+vault.dat
+lockout.dat
+build/
+dist/
+__pycache__/
+*.spec
