@@ -2,6 +2,12 @@
 
 A local, offline password manager with military-grade encryption. No cloud, no database, no internet — your data never leaves your device.
 
+## Download
+
+Grab the latest Windows build from the [Releases page](https://github.com/sinanhuskic/litek-secure/releases/latest) — a single `LitekSecure.exe`, no installation required. Just download and run.
+
+If you'd rather run from source or build the executable yourself, see [Building from Source](#building-from-source) below.
+
 ## Security Architecture
 
 ### Encryption
@@ -80,10 +86,10 @@ This JSON is encrypted as a single blob — individual entries cannot be read wi
 
 | File | Purpose |
 |------|---------|
-| `LitekSecure.exe` | Standalone application (no installation needed) |
-| `vault.dat` | Encrypted data (created automatically on first run) |
 | `vault_manager.py` | Source code |
 | `icon.png` / `icon.ico` / `icon.svg` | Application logo |
+| `LitekSecure.exe` | Standalone build — distributed via [Releases](https://github.com/sinanhuskic/litek-secure/releases), not tracked in this repository |
+| `vault.dat` | Encrypted data — created automatically next to the executable on first run |
 
 ## Building from Source
 
