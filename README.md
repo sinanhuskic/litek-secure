@@ -23,11 +23,16 @@ If you'd rather run from source or build the executable yourself, see [Building 
 - Even with full access to the source code and vault.dat, data cannot be recovered without the master password.
 
 ### Additional Protections
-- **Brute-force protection** — Exponential delay after failed login attempts (2s, 4s, 8s... up to 5 minutes).
-- **Auto-lock** — Vault locks automatically after 5 minutes of inactivity.
-- **Clipboard auto-clear** — Copied passwords are wiped from clipboard after 30 seconds.
-- **Memory cleanup** — Sensitive data is cleared from RAM on lock/close.
-- **Read-only vault** — vault.dat is set to read-only after each save to prevent accidental deletion/overwrite.
+- **Brute-force delay (UI only)** — Exponential delay after failed login attempts inside the app (2s, 4s, 8s... up to 5 minutes). This protects against casual local attempts via the UI; it does **not** protect against an offline attack where someone copies `vault.dat` to another machine. Against offline attacks, the only real defense is the 600,000 PBKDF2 iterations combined with a strong master password.
+- **Auto-lock** — Vault locks automatically after 5 minutes of inactivity. Clipboard is also cleared on lock.
+- **Clipboard auto-clear** — Copied passwords are wiped from clipboard after 30 seconds, or immediately on lock.
+- **Memory hygiene** — References to the master password and decrypted vault are dropped on lock/close and `gc.collect()` is invoked. Note: Python string objects are immutable, so we cannot guarantee that residual bytes are overwritten in RAM before reuse — this is a fundamental Python limitation, not a software bug.
+- **Read-only vault** — `vault.dat` is set to read-only after each save to prevent accidental deletion/overwrite.
+
+### Crash & Corruption Resistance
+- **Atomic writes** — Saves go to `vault.dat.tmp` first, are flushed to disk (`fsync`), then atomically renamed into place. A power loss or crash mid-write cannot leave `vault.dat` truncated.
+- **One-generation backup** — Before each successful save, the previous `vault.dat` is rotated to `vault.dat.bak`. If `vault.dat` ever ends up missing or empty (e.g., interrupted write), the app automatically restores it from `vault.dat.bak` at next startup.
+- **Stale temp cleanup** — Leftover `vault.dat.tmp` files from interrupted writes are cleaned up on startup.
 
 ## How It Works
 
@@ -90,6 +95,9 @@ This JSON is encrypted as a single blob — individual entries cannot be read wi
 | `icon.png` / `icon.ico` / `icon.svg` | Application logo |
 | `LitekSecure.exe` | Standalone build — distributed via [Releases](https://github.com/sinanhuskic/litek-secure/releases), not tracked in this repository |
 | `vault.dat` | Encrypted data — created automatically next to the executable on first run |
+| `vault.dat.bak` | Previous-generation backup — written automatically on each save |
+| `vault.dat.tmp` | Transient — only present during an in-progress save; cleaned up at next startup |
+| `lockout.dat` | UI brute-force counter — plain JSON, not security-critical |
 
 ## Building from Source
 

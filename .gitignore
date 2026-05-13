@@ -1,6 +1,9 @@
 vault.dat
+vault.dat.bak
+vault.dat.tmp
 lockout.dat
 build/
 dist/
 __pycache__/
 *.spec
+.claude/

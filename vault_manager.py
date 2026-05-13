@@ -165,6 +165,7 @@ class PasswordManagerApp:
         self.last_activity = time.time()
         self.clipboard_clear_job = None
         self.selected_profile_id = None
+        self._active_toast = None
 
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
@@ -228,6 +229,16 @@ class PasswordManagerApp:
         self._start_auto_lock_check()
 
     def _secure_clear(self):
+        if self.clipboard_clear_job:
+            try:
+                self.root.after_cancel(self.clipboard_clear_job)
+            except Exception:
+                pass
+            self.clipboard_clear_job = None
+        try:
+            self.root.clipboard_clear()
+        except Exception:
+            pass
         self.master_password = None
         self.vault_data = None
         self.selected_profile_id = None
@@ -239,15 +250,59 @@ class PasswordManagerApp:
             w.destroy()
 
     def _check_vault_exists(self):
+        self._recover_vault_if_needed()
         if os.path.exists(self.vault_file):
             self._show_login()
         else:
             self._show_setup()
 
+    def _recover_vault_if_needed(self):
+        tmp_file = self.vault_file + ".tmp"
+        bak_file = self.vault_file + ".bak"
+
+        if os.path.exists(tmp_file):
+            try:
+                os.chmod(tmp_file, 0o666)
+            except Exception:
+                pass
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+
+        min_size = SALT_SIZE + NONCE_SIZE + 16
+        main_missing_or_bad = (
+            not os.path.exists(self.vault_file)
+            or os.path.getsize(self.vault_file) < min_size
+        )
+        if main_missing_or_bad and os.path.exists(bak_file):
+            try:
+                if os.path.exists(self.vault_file):
+                    os.chmod(self.vault_file, 0o666)
+            except Exception:
+                pass
+            try:
+                os.chmod(bak_file, 0o666)
+            except Exception:
+                pass
+            try:
+                os.replace(bak_file, self.vault_file)
+                os.chmod(self.vault_file, 0o444)
+            except Exception:
+                pass
+
     # ─── TOAST / CUSTOM DIALOGS ─────────────────────────────
 
     def _show_toast(self, message, duration=1800):
+        if self._active_toast is not None:
+            try:
+                self._active_toast.destroy()
+            except Exception:
+                pass
+            self._active_toast = None
+
         t = tk.Toplevel(self.root)
+        self._active_toast = t
         t.overrideredirect(True)
         t.attributes("-topmost", True)
         t.configure(bg=self.accent)
@@ -262,6 +317,8 @@ class PasswordManagerApp:
         t.attributes("-alpha", 0.0)
 
         def fade_in(a=0.0):
+            if not t.winfo_exists():
+                return
             if a < 0.95:
                 t.attributes("-alpha", a)
                 t.after(20, lambda: fade_in(a + 0.12))
@@ -270,6 +327,8 @@ class PasswordManagerApp:
                 t.after(duration, lambda: fade_out(0.95))
 
         def fade_out(a):
+            if not t.winfo_exists():
+                return
             if a > 0.05:
                 t.attributes("-alpha", a)
                 t.after(20, lambda: fade_out(a - 0.12))
@@ -278,6 +337,8 @@ class PasswordManagerApp:
                     t.destroy()
                 except Exception:
                     pass
+                if self._active_toast is t:
+                    self._active_toast = None
         fade_in()
 
     def _msg(self, title, message, mode="info"):
@@ -311,9 +372,9 @@ class PasswordManagerApp:
                 start_y = random.randint(-h, h)
                 speed = random.uniform(1.2, 3.5)
                 trail = random.randint(5, 14)
-            self._rain_drops.append({
-                "x": x, "y": float(start_y), "speed": speed, "trail": trail,
-            })
+                self._rain_drops.append({
+                    "x": x, "y": float(start_y), "speed": speed, "trail": trail,
+                })
         self._rain_h = h
         self._rain_hex = hex_chars
         self._animate_rain()
@@ -362,6 +423,12 @@ class PasswordManagerApp:
             highlightbackground=self.border, selectbackground=self.accent,
             selectforeground=self.bg,
         )
+
+    def _bind_mousewheel(self, widget, canvas):
+        def on_wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        widget.bind("<Enter>", lambda e: widget.bind_all("<MouseWheel>", on_wheel))
+        widget.bind("<Leave>", lambda e: widget.unbind_all("<MouseWheel>"))
 
     def _btn(self, parent, text, cmd, style="default"):
         colors = {
@@ -608,8 +675,7 @@ class PasswordManagerApp:
         self._profile_canvas.bind("<Configure>",
             lambda e: self._profile_canvas.itemconfig(pcw, width=e.width))
         self._profile_canvas.pack(fill="both", expand=True)
-        self._profile_canvas.bind_all("<MouseWheel>",
-            lambda e: self._profile_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        self._bind_mousewheel(self._profile_canvas, self._profile_canvas)
 
         tk.Frame(body, bg=self.border, width=1).pack(side="left", fill="y")
 
@@ -632,11 +698,11 @@ class PasswordManagerApp:
         for w in self._profile_inner.winfo_children():
             w.destroy()
         self._profile_ids = []
-        query = self.search_var.get().lower() if hasattr(self, "search_var") else ""
+        query = self.search_var.get().casefold() if hasattr(self, "search_var") else ""
         for pid, p in sorted(
-            self.vault_data["profiles"].items(), key=lambda x: x[1]["name"].lower()
+            self.vault_data["profiles"].items(), key=lambda x: x[1]["name"].casefold()
         ):
-            if query and query not in p["name"].lower():
+            if query and query not in p["name"].casefold():
                 continue
             self._profile_ids.append(pid)
             n = len(p.get("entries", {}))
@@ -727,7 +793,7 @@ class PasswordManagerApp:
         cw = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
         canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        self._bind_mousewheel(canvas, canvas)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -900,19 +966,60 @@ class PasswordManagerApp:
             if old_pw != self.master_password:
                 self._msg_error("greška", "trenutna šifra nije tačna")
                 return
+            previous_master = self.master_password
             self.master_password = new_pw
-            self._save_vault()
+            try:
+                self._save_vault()
+            except Exception as e:
+                self.master_password = previous_master
+                self._msg_error("greška", f"snimanje nije uspjelo, šifra nije promijenjena:\n{e}")
+                return
             self._show_toast("master šifra promijenjena")
 
     # ─── PERSISTENCE ────────────────────────────────────────
 
     def _save_vault(self):
         encrypted = VaultCrypto.encrypt(self.vault_data, self.master_password)
-        if os.path.exists(self.vault_file):
-            os.chmod(self.vault_file, 0o666)
-        with open(self.vault_file, "wb") as f:
+
+        tmp_file = self.vault_file + ".tmp"
+        bak_file = self.vault_file + ".bak"
+
+        if os.path.exists(tmp_file):
+            try:
+                os.chmod(tmp_file, 0o666)
+            except Exception:
+                pass
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+
+        with open(tmp_file, "wb") as f:
             f.write(encrypted)
-        os.chmod(self.vault_file, 0o444)
+            f.flush()
+            os.fsync(f.fileno())
+
+        if os.path.exists(self.vault_file):
+            try:
+                os.chmod(self.vault_file, 0o666)
+            except Exception:
+                pass
+            if os.path.exists(bak_file):
+                try:
+                    os.chmod(bak_file, 0o666)
+                except Exception:
+                    pass
+            os.replace(self.vault_file, bak_file)
+            try:
+                os.chmod(bak_file, 0o444)
+            except Exception:
+                pass
+
+        os.replace(tmp_file, self.vault_file)
+        try:
+            os.chmod(self.vault_file, 0o444)
+        except Exception:
+            pass
 
 
 # ─── DIALOGS ────────────────────────────────────────────────
